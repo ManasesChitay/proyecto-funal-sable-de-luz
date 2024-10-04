@@ -1,0 +1,112 @@
+#include <Wire.h>
+#include <FastLED.h>
+#include <SoftwareSerial.h>
+#include <DFRobotDFPlayerMini.h>
+#include <Adafruit_Sensor.h>
+#include <Adafruit_ADXL345_U.h>
+
+#define NUM_LEDS 34
+#define LED_PIN 6
+#define BUTTON_PIN 4
+#define RX_PIN 2
+#define TX_PIN 3
+
+CRGB leds[NUM_LEDS];
+SoftwareSerial mySerial(RX_PIN, TX_PIN);
+DFRobotDFPlayerMini myDFPlayer;
+
+// Inicialización del acelerómetro
+Adafruit_ADXL345_Unified adxl = Adafruit_ADXL345_Unified(12345); // Usa un ID de sensor arbitrario
+
+bool systemOn = false; // Estado del sistema
+int buttonState = 0;   // Estado del botón
+int lastButtonState = 0; // Último estado del botón
+bool trackPlaying = false; // Estado de la pista 0004
+bool track1Playing = false; // Estado de la pista 0001
+unsigned long lastPrintTime = 0; // Control de tiempo para impresión serial
+
+void setup() {
+  FastLED.addLeds<WS2812B, LED_PIN, GRB>(leds, NUM_LEDS);
+  pinMode(BUTTON_PIN, INPUT_PULLUP);
+  mySerial.begin(9600);
+  Serial.begin(9600);
+
+  if (!myDFPlayer.begin(mySerial)) {
+    while (true); // Detener si el DFPlayer no está presente
+  }
+  Serial.println("DFPlayer Mini listo");
+  myDFPlayer.volume(100); // Ajusta el volumen (0-30)
+
+  // Inicializa el acelerómetro
+  if (!adxl.begin()) {
+    Serial.println("No se pudo encontrar el ADXL345");
+    while (true);
+  }
+  adxl.setRange(ADXL345_RANGE_16_G); // Configura el rango del acelerómetro a 16G
+}
+
+void loop() {
+  buttonState = digitalRead(BUTTON_PIN);
+
+  // Detectar el cambio de estado del botón
+  if (buttonState == LOW && lastButtonState == HIGH) {
+    systemOn = !systemOn; // Cambia el estado del sistema
+
+    if (systemOn) {
+      turnOnLightsaber();
+      myDFPlayer.play(2); // Reproduce la pista 0001 al encender
+      track1Playing = true; // Marca que la pista 0001 está sonando
+    } else {
+      turnOffLightsaber();
+      myDFPlayer.stop(); // Detiene cualquier pista
+      myDFPlayer.play(3); // Reproduce la pista 0003 al apagar
+      track1Playing = false; // Resetea el estado de la pista 0001
+      trackPlaying = false; // Resetea el estado de la pista 0004
+    }
+    delay(20); // Debounce
+  }
+
+  if (systemOn) {
+    // Leer acelerómetro
+    sensors_event_t event; 
+    adxl.getEvent(&event);
+    
+    // Mostrar valores en el monitor serial cada 100 ms
+    unsigned long currentMillis = millis();
+    if (currentMillis - lastPrintTime >= 100) {
+      lastPrintTime = currentMillis;
+      Serial.print("X: "); Serial.print(event.acceleration.x);
+      Serial.print(" | Y: "); Serial.print(event.acceleration.y);
+      Serial.print(" | Z: "); Serial.println(event.acceleration.z);
+      
+      // Detectar movimiento por umbral
+      if ((event.acceleration.x > 10.90 || event.acceleration.y > 11.20 || event.acceleration.z >  12.90) && !trackPlaying) {
+        if (track1Playing) {
+          // Solo reproduce la pista 0004 si la 0001 está sonando
+          myDFPlayer.play(4); // Reproduce la pista 0004
+          trackPlaying = true; // Cambia el estado de la pista 0004
+        }
+      } else {
+        trackPlaying = false; // Resetea el estado si no hay movimiento
+      }
+    }
+  }
+
+  lastButtonState = buttonState; // Actualiza el último estado del botón
+}
+
+void turnOnLightsaber() {
+  for (int i = 0; i < NUM_LEDS; i++) {
+    leds[i] = CRGB::Purple; // Cambia a morado
+    FastLED.show();
+    delay(10); // Efecto de encendido uno por uno
+  }
+}
+
+void turnOffLightsaber() {
+  for (int i = NUM_LEDS - 1; i >= 0; i--) {
+    leds[i] = CRGB::Black; // Apaga los LEDs uno por uno
+    FastLED.show();
+    delay(5); // Efecto de apagado uno por uno
+  }
+}
